@@ -18,11 +18,8 @@ int main(){
 
 	sockfd = socket(PF_INET, SOCK_STREAM, 0);
 
-	printf("input port: ");
-	scanf("%d", &port_num);
-
 	dest_addr.sin_family = AF_INET;
-	dest_addr.sin_port = htons(port_num);
+	dest_addr.sin_port = htons(9100);
 	inet_aton("127.0.0.1", &(dest_addr.sin_addr));
 	memset(&(dest_addr.sin_zero), 0, 8);
 

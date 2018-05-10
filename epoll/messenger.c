@@ -3,6 +3,7 @@
 #include<arpa/inet.h>
 #include<sys/types.h>
 #include<sys/time.h>
+#include<sys/epoll.h>
 #include<stdlib.h>
 #include<unistd.h>
 #include<string.h>
@@ -18,15 +19,13 @@ struct sockaddr_in server_addr, client_addr;
 
 int main(int argc, char* argv[])
 {
-	int dst_fd, ifd;
+	int dst_fd, epfd;
+	int event_cnt, i, mode;
+	struct epoll_event ev, evs[10];
 	int str_len;
 	char message[BUF_SIZE];
 	struct timeval timeout;
 
-	fd_set readfds, readtemp;
-	int max_fd =0;
-	int result;
-	int mode;
 
 	switch(argc) {
 		case 2:
@@ -41,40 +40,31 @@ int main(int argc, char* argv[])
 			fprintf(stderr, "Usage: %s [<IP>] <PORT>\n", argv[0]);
 			return 0;
 	}
+	
+	epfd = epoll_create1(0);
+	ev.events = EPOLLIN;
+	ev.data.fd = dst_fd;
+	epoll_ctl(epfd, EPOLL_CTL_ADD, dst_fd, &ev); //ev is temporary.
+	ev.events = EPOLLIN;
+	ev.data.fd = STDIN_FILENO;
+	epoll_ctl(epfd, EPOLL_CTL_ADD, STDIN_FILENO, &ev); //ev is temporary.
 
-	FD_ZERO(&readfds);
-	FD_SET(STDIN_FILENO, &readfds);
-	FD_SET(dst_fd, &readfds);
-	max_fd = dst_fd;
 
 	while(1){
-		readtemp = readfds;
-
-		result = select(max_fd+1, &readtemp, NULL, NULL, NULL);
-		if(result ==-1){
-			perror("select");
-			exit(EXIT_FAILURE);
+		event_cnt = epoll_wait(epfd, evs, 10, -1);
+		if(event_cnt == -1) {
+			perror("epoll");
+			break;
 		}
-		else if(result == 0){
+		else if(event_cnt == 0) {
 			printf("Timeout\n");
-			continue;
+			continue;// jump to end of while
 		}
+		for(i =0; i <= event_cnt; i++){
+			if(evs[i].events == EPOLLIN){
 
-		for(ifd = 0; ifd<=max_fd; ifd++){
-			if(FD_ISSET(ifd, &readtemp)) {
-				if(ifd == STDIN_FILENO) {
-					str_len = read(ifd, message, BUF_SIZE);
-					if(strcmp(message, escape) ==0){
-						close(ifd);
-						printf("DISCONNECTED\n");
-						return 0;
-					}
-					//message[str_len -1] =0;
-					printf("ME: %s\n", message);
-					write(dst_fd, message, strlen(message));
-				}
-				else if(ifd == dst_fd){
-					str_len = read(ifd, message, BUF_SIZE);
+				if(evs[i].data.fd ==dst_fd) {
+					str_len = read(evs[i].data.fd, message, BUF_SIZE);
 					if(str_len == 0){
 						close(dst_fd);
 						printf("DISCONNECTED\n");
@@ -82,11 +72,25 @@ int main(int argc, char* argv[])
 					}
 					message[str_len -1] =0;
 					printf("SOMEONE: %s\n", message);
+
+				}
+				else{
+					str_len = read(evs[i].data.fd, message, BUF_SIZE);
+					if(strcmp(message, escape) ==0){
+						epoll_ctl(epfd, EPOLL_CTL_DEL, evs[i].data.fd, NULL);
+						close(evs[i].data.fd);
+						printf("DISCONNECTED\n");
+						return 0;
+					}
+					else
+						write(dst_fd, message, str_len);
 				}
 			}
 		}
 	}
-	close(ifd);
+	//block printf andoel sudo. fflush ham.
+	close(dst_fd);
+	close(epfd);
 	return 0;
 }
 
@@ -114,7 +118,7 @@ int run_server(int port){
 
 	printf("Waiting for connect\n");
 	client_s = accept(server_s, (struct sockaddr *)&client_addr, &sin_size);
-
+	
 	if(client_s ==-1){
 		perror("accept");
 		exit(EXIT_FAILURE);
